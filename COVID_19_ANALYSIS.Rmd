@@ -1,0 +1,272 @@
+---
+title: "Global and Regional COVID-19 Trends"
+author: "Mario Vasquez Padilla"
+date: "2025-07-28"
+output: html_document
+---
+
+# Introduction
+
+The COVID-19 dataset used in this project comes from the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE). Since 2020, JHU CSSE has maintained one of the most widely referenced public datasets tracking the global spread of COVID-19. The data includes daily cumulative counts of confirmed cases, deaths, and recoveries. This data is validated by country, province/state, and date.
+
+The objective of this project is to explore the dataset and obtain valuable conclusions. We will create visualizations to illustrate trends and build a statistical model to deepen our understanding of the outbreak. We will also reflect on potential biases in the data and in our analysis approach.
+
+This report is designed to be fully reproducible, and all code is included within this document. The dataset is retrieved from the following link:
+
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv
+
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv
+
+# Obtaining the Data
+
+The first step will be to import the data into our R Markdown file. To do this, we will load the necessary libraries for this project. Since I am learning to use R Markdown as a professional Data Scientist, I included the following libraries:
+
+1. **tidyverse**: for data manipulation, visualization, and reading CSVs (dplyr, ggplot2, readr, tidyr).
+2. **lubridate**: to handle and format date values (e.g., extracting year, converting strings to dates).
+3. **scales**: to format plot axes (displaying numbers in thousands or millions).
+4. **ggthemes**: adds extra themes and styling options for ggplot2 visualizations.
+5. **janitor**: used to clean and standardize column names with functions like clean_names().
+6. **broom**: converts model results (from lm()) into tidy data frames for easy interpretation.
+7. **knitr**: supports table formatting and rendering within R Markdown documents.
+8. **kableExtra**: enhances kable() tables with styling, alignment, scroll boxes, and layout customization.
+9. **caret**: provides tools for building and evaluating predictive models (optional here if not used directly).
+
+```{r message=FALSE, warning=FALSE}
+# Loading necessary libraries
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(ggthemes)
+library(janitor)
+library(broom)
+library(knitr)
+library(kableExtra)
+library(caret)
+
+# We now load the data from the provided links
+confirmed_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
+deaths_url    <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv"
+
+# We store into variables our data
+confirmed_raw <- read_csv(confirmed_url)
+deaths_raw    <- read_csv(deaths_url)
+```
+
+To quickly view the columns per tibble (HTML only), we can use the following code:
+
+```{r message=FALSE,warning=FALSE}
+
+kable(head(confirmed_raw, 5)) %>%
+  kable_styling(full_width = FALSE) %>%
+  scroll_box(width = "100%", height = "300px")
+
+kable(head(deaths_raw, 5)) %>%
+  kable_styling(full_width = FALSE) %>%
+  scroll_box(width = "100%", height = "300px")
+
+```
+
+We are now moving on to the next chapter, which is transforming the data.
+
+# Data Transformation
+
+The data that we are working with may cause confusion, mainly because there is one column per date (keep in mind we have data from 2020 to 2023). To easily work with our data, we will move all dates to a single column.
+
+```{r message=FALSE, warning=FALSE}
+
+# New view for confirmed cases
+confirmed_long <- confirmed_raw %>%
+  pivot_longer(
+    cols = matches("^\\d+/\\d+/\\d+$"),
+    names_to = "date",
+    values_to = "confirmed"
+  ) %>%
+  mutate(date = mdy(date))
+
+# New view for deaths
+deaths_long <- deaths_raw %>%
+  pivot_longer(
+    cols = matches("^\\d+/\\d+/\\d+$"),
+    names_to = "date",
+    values_to = "deaths"
+  ) %>%
+  mutate(date = mdy(date))
+
+# Unified tibble for confirmed cases and deaths
+covid_long <- confirmed_long %>%
+  left_join(deaths_long %>% select(-Lat, -Long), 
+            by = c("Province/State", "Country/Region", "date"))
+
+# Simplification of column names
+covid_long <- covid_long %>%
+  clean_names() %>%
+  rename(
+    province = province_state,
+    country = country_region
+  )
+```
+
+We now display the first 20 entries of the data stored in "covid_long" to quickly view it in tabular form (HTML only):
+
+```{r message=FALSE,warning=FALSE}
+
+kable(head(covid_long, 20)) %>%
+  kable_styling(full_width = FALSE) %>%
+  scroll_box(width = "100%", height = "300px")
+```
+
+The following code calculates daily new cases, new deaths, and case fatality rate for each location over time. These metrics help us analyze trends, compare regions, and prepare for modeling. Including the code in the R Markdown ensures results are reproducible from the original data.
+
+```{r message=FALSE,warning=FALSE}
+covid_long <- covid_long %>%
+  arrange(country, province, date) %>%
+  group_by(country, province) %>%
+  mutate(
+    new_cases = confirmed - lag(confirmed, default = 0),
+    new_deaths = deaths - lag(deaths, default = 0),
+    case_fatality_rate = ifelse(confirmed > 0, deaths / confirmed, NA)
+  ) %>%
+  ungroup()
+```
+
+Now, our data looks like this (again, this is better viewed in HTML):
+
+```{r message=FALSE,warning=FALSE}
+
+kable(head(covid_long, 20)) %>%
+  kable_styling(full_width = FALSE) %>%
+  scroll_box(width = "100%", height = "300px")
+```
+
+We are now ready to move on to visualizing our data and obtaining insights.
+
+# Data Visualization & Analysis
+
+To visualize and analyze our data, we will ask three questions, which will focus on:
+
+1. **Global transmission trends**: understanding how COVID-19 spread globally over time.
+2. **Country-level impact**: analyzing which countries were most affected and how their case curves compare.
+3. **Mortality differences across regions**: exploring how fatal the virus was in different countries and how those rates evolved.
+
+#### 1. How did the global spread of COVID-19 evolve over time, and what can we infer about the magnitude and timing of the major pandemic waves?
+
+```{r message=FALSE,warning=FALSE}
+covid_long %>%
+  group_by(date) %>%
+  summarise(global_new_cases = sum(new_cases, na.rm = TRUE)) %>%
+  ggplot(aes(x = date, y = global_new_cases)) +
+  geom_line(color = "steelblue") +
+  labs(title = "Global Daily New COVID-19 Cases",x="Years",y = "New Cases (in millions)") +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  theme_minimal()
+```
+
+This graph shows the global trend of daily new cases. Peaks correspond to major global waves, such as Delta and Omicron. The sharp rises and falls highlight how quickly variants spread and how mitigation efforts or lack of reports affected detection. Engineers can use this to correlate infrastructure strain load with case surges. Smoothing this line could help detect persistent trends behind short-term volatility.
+
+#### 2. Which countries reported the highest total number of confirmed COVID-19 cases, and how did the progression of the pandemic differ across these nations?
+
+```{r message=FALSE,warning=FALSE}
+top_countries <- covid_long %>%
+  group_by(country) %>%
+  summarise(total_cases = max(confirmed, na.rm = TRUE)) %>%
+  top_n(5, total_cases)
+
+covid_long %>%
+  filter(country %in% top_countries$country) %>%
+  group_by(date, country) %>%
+  summarise(confirmed = sum(confirmed, na.rm = TRUE)) %>%
+  ggplot(aes(x = date, y = confirmed, color = country)) +
+  geom_line(size = 1) +
+  labs(title = "Top 5 Countries by Total Confirmed Cases", x="Years", y = "Cumulative Confirmed Cases (in millions)") +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  theme_minimal()
+```
+
+This graph highlights the countries with the highest total case counts. It allows comparison of the pace and duration of outbreaks across regions. For example, a steep curve shows rapid transmission, while a flat curve may indicate early containment or lack of reports. Engineers involved in resource allocation or pandemic modeling can infer how health systems were pressured at different stages.
+
+#### 3. How did the case fatality rate change over time in selected countries, and what might explain the differences in mortality outcomes across regions?
+
+```{r message=FALSE,warning=FALSE}
+countries_focus <- c("Honduras", "El Salvador", "Guatemala", "Nicaragua", "Panama", "Costa Rica", "Belize")
+
+covid_long %>%
+  filter(country %in% countries_focus) %>%
+  mutate(year = year(date)) %>%
+  group_by(year, country) %>%
+  summarise(
+    total_deaths = sum(deaths, na.rm = TRUE),
+    total_confirmed = sum(confirmed, na.rm = TRUE),
+    cfr = ifelse(total_confirmed > 0, total_deaths / total_confirmed, NA)
+  ) %>%
+  ggplot(aes(x = factor(year), y = cfr, fill = country)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  labs(title = "Case Fatality Rate by Year and Country", x="Years", y = "Case fatality rate (%)") +
+  theme_minimal()
+```
+
+This grouped bar chart compares the annual case fatality rate across Central American countries from 2020 onward. Each bar represents the proportion of confirmed COVID-19 cases that resulted in death within a given year.
+
+# Regression model
+
+We will build a simple linear regression model to predict a country’s case fatality rate using the following predictor variables:
+
+1. **Longitude**: a proxy for geographic location
+2. **Total confirmed cases**: accounts for outbreak size
+
+The goal is to see whether these factors are statistically associated with higher or lower fatality rates.
+
+This helps us answer:
+
+**Can we explain or predict differences in mortality outcomes using geography and case volume?**
+
+```{r message=FALSE, warning=FALSE}
+
+model_data <- covid_long %>%
+  filter(date == max(date), confirmed > 1000) %>%
+  group_by(country) %>%
+  summarise(
+    total_confirmed = sum(confirmed, na.rm = TRUE),
+    total_deaths = sum(deaths, na.rm = TRUE),
+    long = mean(long, na.rm = TRUE)
+  ) %>%
+  mutate(
+    cfr = total_deaths / total_confirmed
+  ) %>%
+  drop_na(cfr, total_confirmed, long)
+
+# Linear regression model
+model <- lm(cfr ~ total_confirmed + long, data = model_data)
+
+summary(model)
+```
+
+This regression model shows no statistically significant relationship between case fatality rate and the variables total_confirmed or longitude. While the direction of the coefficients makes theoretical sense (e.g., higher confirmed counts linked to lower CFR), the effects are too weak and noisy to draw reliable conclusions.
+
+The results highlight that CFR is influenced by many other unmeasured variables, such as healthcare system quality, age structure, testing/reporting accuracy, and policy responses. As such, future models would benefit from including those variables to improve explanatory power.
+
+# Bias and Limitations
+
+The Johns Hopkins COVID-19 dataset is a valuable resource for research, but it comes with several limitations that can introduce bias into the analysis.
+
+#### 1. Data Collection Bias
+
+Many countries likely reported lower-than-actual numbers of confirmed cases and deaths due to limited testing capacity and inconsistent reporting standards. This affects the accuracy of calculated metrics such as the case fatality rate.
+
+#### 2. Geographic and Temporal Bias
+
+Because the data is summarized at the country level, it may overlook important regional variations within each nation. Additionally, using longitude as a geographic indicator does not capture key differences in healthcare systems, population demographics, or national response strategies.
+
+#### 3. Modeling Limitations
+
+The regression model explained only a small portion of the variation in case fatality rate and did not produce statistically significant results. Important factors influencing fatality rates, including vaccination coverage, virus variants, and healthcare quality, were not included in the analysis.
+
+# Conclusions
+
+This analysis used global COVID-19 data to explore trends in daily new cases, identify the most affected countries, and compare annual fatality rates across a specific geographical area. The visualizations revealed key differences in how the pandemic evolved by location and over time.
+
+A regression model was built to explain case fatality rates using longitude and total confirmed cases, but it showed limited explanatory power and no statistically significant results. This suggests that other factors like vaccination coverage, virus variants, and healthcare quality play a much larger role.
+
+The findings should be interpreted with caution. Reporting practices and testing capacity varied across countries, and aggregating data at the country level may hide important regional differences. Even so, the project demonstrates how structured data can be used to extract insights and guide further investigation.
+
+

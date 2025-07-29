@@ -1,0 +1,215 @@
+---
+title: "NYPD Shootings Project"
+author: "Mario Vasquez Padilla"
+date: "2025-07-27"
+output:
+  html_document: default
+  pdf_document: default
+---
+# Introduction
+This report shows the process of importing, transforming, and analyzing data for NYPD shooting incidents. This dataset includes all reported shooting incidents in New York City from 2006 through 2024.
+
+The goal of this report is to analyze trends in shooting incidents in NYC. 
+
+The following libraries are loaded:
+
+1. **dplyr**: used for data cleaning, filtering, grouping, and summarizing shooting records.
+2. **lubridate**: helped convert and extract time components from date/time fields.
+3. **hms**: handled time data formats when working with incident timestamps stored as hours, minutes, and seconds.
+4. **knitr**: allowed you to display formatted tables in the knitted R Markdown report.
+5. **kableExtra**: enhanced the appearance of tables created with kable(), including styling and scrollable formatting.
+
+### Step 1: Load Data
+
+First, data is imported from the link below (library readr is loaded to allow importing CSV files):
+
+```{r message=FALSE, warning=FALSE}
+# Import libraries to read data
+library(readr)
+
+# URL that contains the CSV file
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+# Import the data
+nypd_data <- read_csv(url)
+```
+
+The following shows a quick preview of the data. 
+
+```{r results='asis', message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+kable(head(nypd_data, 5)) %>%
+  kable_styling(full_width = FALSE) %>%
+  scroll_box(width = "100%", height = "300px")
+```
+
+We are now ready to move on to transforming the data.
+
+### Step 2: Transform Data
+
+The data imported into "nypd_data" contains many columns that won't be needed for analysis. Therefore, the required data will be stored into "nypd_clean". In addition, some values will be modified to make it easier to graph the values. 
+
+```{r message=FALSE, warning=FALSE}
+# Loading necessary libraries
+library(dplyr)
+library(lubridate)
+library(hms)
+library(knitr)
+library(kableExtra)
+
+# Only 10 columns will be selected, and some will be edited to display clearer information
+nypd_clean <- nypd_data %>%
+  select(INCIDENT_KEY,
+         OCCUR_DATE, 
+         OCCUR_TIME, 
+         BORO, 
+         STATISTICAL_MURDER_FLAG,
+         PERP_RACE, 
+         PERP_SEX, 
+         VIC_RACE, 
+         VIC_SEX, 
+         LOCATION_DESC) %>%
+  mutate(
+    OCCUR_DATE = mdy(OCCUR_DATE),
+    INC_YEAR = year(OCCUR_DATE),
+    INC_MONTH = month(OCCUR_DATE),
+    INC_MONTH_NAME = month(OCCUR_DATE, label = TRUE, abbr = FALSE),
+    INC_TIME = hour(as_hms(OCCUR_TIME))
+  )
+
+kable(head(nypd_clean, 5)) %>%
+  kable_styling(full_width = FALSE) %>%
+  scroll_box(width = "100%", height = "300px")
+
+```
+
+The data is now transformed and ready to be analyzed. 
+
+### Step 3: Visualizing, Analyzing, and Modeling Data
+
+Now that only the most relevant columns are selected, new questions come up:
+
+1. Which boroughs have had the most shootings over the years?
+2. During what time of the day do most shootings occur?
+3. Is there a notable increase or decrease in shootings per year by perpetrator race?
+
+To answer each question, we will create visuals. We start by importing the necessary libraries:
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+```
+
+#### 1. Which boros have had the most shootings over the years?
+
+To answer this question, we will create a heat map that shows shootings per borough and year.
+
+```{r message=FALSE, warning=FALSE}
+# Variable to count shootings by boroughs and year
+borough_year <- nypd_clean %>%
+  filter(!is.na(BORO), !is.na(INC_YEAR)) %>%
+  count(INC_YEAR, BORO)
+
+ggplot(borough_year, aes(x = BORO, y = factor(INC_YEAR), fill = n)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "lightblue", high = "red") +
+  labs(title = "Total Shootings by Borough and Year",
+       x = "Borough",
+       y = "Year",
+       fill = "Shootings") +
+  theme_minimal()
+```
+
+From the heat map, we can see that Brooklyn registers the most shootings, especially from 2006 to 2011, with an increase in 2020. The Bronx seems to follow Brooklyn with most shootings. Manhattan and Queens have registered less shootings, and Staten Island seems to stay below the 200 mark. 
+
+#### 2. During what time of the day do most shootings occur?
+
+To understand at what time shootings happen, we will create a histogram that shows total shootings per hour (all years included).
+
+```{r message=FALSE, warning=FALSE}
+nypd_clean %>%
+  filter(!is.na(INC_TIME)) %>%
+  ggplot(aes(x = INC_TIME)) +
+  geom_histogram(binwidth = 1, fill = "#0073C2FF", color = "white") +
+  scale_x_continuous(breaks = 0:23) +
+  labs(title = "Shootings by Hour of Day",
+       x = "Hour (0 = 12 AM, 23 = 11 PM)",
+       y = "Number of Shootings") +
+  theme_minimal()
+```
+
+We can see that most shootings occur at night, reducing between 4 am and 5 am. At 9 am, the tendency starts to grow. 
+
+#### 3. Is there a notable increase or decrease in shootings per year by perpetrator race?
+
+We create a line graph to understand if perpetrator race has changed over the years in recorded shootings. 
+
+```{r message=FALSE, warning=FALSE}
+# Variable to count shootings by perpetrator race and year
+race_year <- nypd_clean %>%
+  filter(
+    !is.na(PERP_RACE),
+    PERP_RACE != "",
+    PERP_RACE != "(null)",
+    !is.na(INC_YEAR)
+  ) %>%
+  group_by(INC_YEAR, PERP_RACE) %>%
+  summarise(total_shootings = n(), .groups = "drop")
+
+# Line graph showing trends by race
+ggplot(race_year, aes(x = INC_YEAR, y = total_shootings, color = PERP_RACE)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = seq(min(race_year$INC_YEAR), max(race_year$INC_YEAR), by = 2)) +
+  labs(title = "Annual Shooting Incidents by Perpetrator Race",
+       x = "Year",
+       y = "Number of Shootings",
+       color = "Perpetrator Race") +
+  theme_minimal()
+```
+
+Across all recorded years, individuals identified as "Black" are the most frequently reported perpetrators in shooting incidents. Nonetheless, the number of shootings from these individuals has decreased over the years, with a peak between 2020 and 2022. 
+
+#### Logistic Regression
+
+```{r message=FALSE, warning=FALSE}
+library(broom)
+
+model_data <- nypd_clean %>%
+  filter(!is.na(VIC_SEX), !is.na(VIC_RACE), !is.na(BORO), !is.na(INC_TIME)) %>%
+  filter(VIC_SEX %in% c("M", "F")) %>%
+  mutate(
+    MURDER = as.factor(ifelse(STATISTICAL_MURDER_FLAG == "TRUE", 1, 0)),
+    VIC_SEX = as.factor(VIC_SEX),
+    VIC_RACE = as.factor(VIC_RACE),
+    BORO = as.factor(BORO),
+    HOUR_GROUP = as.factor(case_when(
+      INC_TIME >= 6 & INC_TIME < 12 ~ "Morning",
+      INC_TIME >= 12 & INC_TIME < 18 ~ "Afternoon",
+      INC_TIME >= 18 & INC_TIME < 24 ~ "Evening",
+      TRUE ~ "Night"
+    ))
+  ) %>%
+  select(MURDER, BORO, VIC_SEX, VIC_RACE, HOUR_GROUP)
+
+log_model <- glm(MURDER ~ ., data = model_data, family = binomial)
+summary(log_model)
+```
+
+A logistic regression model was used to predict whether a shooting incident was classified as a murder based on location, victim demographics, and time of day. Most variables were not significant, but incidents occurring in the morning were significantly more likely to be murders. Incidents in Manhattan were slightly less likely to result in murder. Overall, the model had limited predictive power, suggesting other factors may influence outcomes.
+
+# Bias and Limitations
+
+This analysis is based on reported shooting incidents and may not account for all relevant factors influencing whether an incident results in a murder. Important variables like weapon type, injury severity, and response time are not included. There may also be inconsistencies or omissions in the way incidents are reported across boroughs. Additionally, demographic data may contain missing or vague entries (for example, race marked as “Unknown”), which can affect model accuracy and interpretation. As a result, findings should be viewed as exploratory rather than conclusive.
+
+### Conclusions
+
+After analyzing the NYPD shooting incidents, important information based on location, timing, and demographics were revealed:
+
+1. Geographical trends: Brooklyn and the Bronx have registered the highest number of shootings per year, with Brooklyn having the most from 2006 to 2011. Staten Island has the least number of registered shootings from the NYPD.
+2. Timing trends: shootings are more frequent at night, occurring mostly between 9 pm and 1 am. Police presence is required mostly during these hours. 
+3. Demographics trends: the data shows that the race "Black" was the most registered perpetrator race during all years, followed by "White Hispanic" and "Black Hispanic". There is a notable reduction in reported shootings over the years for these races, with a slight increase from 2020 onward. 
+
+This analysis shows that gun violence in New York City is concentrated in specific boroughs and time periods, suggesting that deeper issues like poverty, inequality, or local conditions may play a role. Future studies could include factors like education, income, and policing strategies to better understand and address these patterns.
+
